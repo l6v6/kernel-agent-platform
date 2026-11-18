@@ -1,119 +1,158 @@
-# API 接口约定
+# API 接口文档
 
-> 文档状态：初始草案。接口路径、字段和状态码以实际实现为准。
-
-## 1. 通用约定
-
-- 基础路径建议：`/api`
+- 前缀：`/api`
 - 数据格式：JSON
-- 字符编码：UTF-8
-- 每个任务由唯一 `task_id` 标识。
-- 长耗时任务采用“提交任务后返回 ID，再查询状态”的方式，不让创建请求无限等待。
+- 第一阶段算子：`vector_add`
+
+## 1. 统一任务状态
+`pending`、`generating`、`generated`、`running`、`evaluating`、`completed`、`failed`。
+
+失败阶段代码通过 `failure_stage` 表示：`generation_failed`、`execution_failed`、`evaluation_failed`。注意：它们不是新的任务状态，任务状态仍为 `failed`。
+
+通用错误格式：
+
+```json
+{
+  "detail": {
+    "code": "INVALID_REQUEST",
+    "message": "shape must contain positive integers"
+  }
+}
+```
 
 ## 2. 创建任务
 
 `POST /api/tasks`
 
-请求示例：
+请求：
 
 ```json
 {
-  "operator": "relu",
-  "input_shape": [1024],
-  "dtype": "float32",
-  "backend": "triton"
+  "operator": "vector_add",
+  "description": "计算两个向量对应位置元素之和",
+  "shape": [4],
+  "dtype": "float32"
 }
 ```
 
-字段说明：
+字段：`operator` string 必填；`description` string 可选；`shape` 正整数数组必填；`dtype` string 必填，第一阶段支持 `float32`。
 
-| 字段 | 类型 | 必需 | 说明 |
-|---|---|---|---|
-| `operator` | string | 是 | 已支持的算子名称 |
-| `input_shape` | integer array | 是 | 输入张量形状，需校验正负值和上限 |
-| `dtype` | string | 是 | 已支持的数据类型 |
-| `backend` | string | 是 | 已配置且可用的执行后端 |
-
-成功响应示例：
+成功响应：HTTP 201
 
 ```json
 {
-  "task_id": "task_example",
-  "status": "pending"
+  "task_id": "task_001",
+  "operator": "vector_add",
+  "status": "pending",
+  "created_at": "2026-11-18T10:00:00Z"
 }
 ```
 
-## 3. 查询任务
-
-`GET /api/tasks/{task_id}`
-
-响应示例：
-
-```json
-{
-  "task_id": "task_example",
-  "status": "testing",
-  "created_at": "YYYY-MM-DDTHH:mm:ssZ"
-}
-```
-
-## 4. 查询任务结果
-
-`GET /api/tasks/{task_id}/result`
-
-响应示例：
-
-```json
-{
-  "task_id": "task_example",
-  "status": "completed",
-  "correctness": {
-    "passed": true,
-    "details": "由测试程序生成的摘要"
-  },
-  "performance": {
-    "baseline_latency_us": 0.0,
-    "candidate_latency_us": 0.0,
-    "speedup": 0.0
-  }
-}
-```
-
-上面的性能数值为占位示例，不是实际实验结果。正式响应中应使用真实测量值；若没有有效结果，应返回 `null` 或明确的不可用状态，而不是填入虚构数字。
-
-## 5. 查询任务列表
+## 3. 查询任务列表
 
 `GET /api/tasks`
 
-初期可返回最近创建的任务。后续可增加分页、状态筛选和时间范围筛选。
-
-## 6. 错误响应建议
+可选参数：`status`、`limit`（默认 20，最大 100）、`offset`（默认 0）。
 
 ```json
 {
-  "error": {
-    "code": "INVALID_TASK",
-    "message": "任务参数无效"
+  "items": [
+    {
+      "task_id": "task_001",
+      "operator": "vector_add",
+      "status": "completed",
+      "created_at": "2026-11-18T10:00:00Z"
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+## 4. 查询任务详情
+
+`GET /api/tasks/{task_id}`
+
+```json
+{
+  "task_id": "task_001",
+  "operator": "vector_add",
+  "description": "计算两个向量对应位置元素之和",
+  "shape": [4],
+  "dtype": "float32",
+  "status": "completed",
+  "failure_stage": null,
+  "error": null,
+  "generation": {
+    "success": true,
+    "language": "python",
+    "code": "def vector_add(a, b): return a + b"
+  },
+  "execution": {
+    "success": true,
+    "output": [6, 8, 10, 12]
+  },
+  "evaluation": {
+    "passed": true,
+    "message": "结果一致"
+  },
+  "benchmark": {
+    "latency_ms": 0.01,
+    "is_simulated": true,
+    "note": "模拟记录，不代表真实 GPU 性能"
+  },
+  "created_at": "2026-11-18T10:00:00Z",
+  "updated_at": "2026-11-18T10:00:01Z"
+}
+```
+
+以上时间、task_id 和 latency 均为格式示例，不是真实数据。
+
+任务不存在：HTTP 404，错误码 `TASK_NOT_FOUND`。
+
+## 5. 查询任务结果
+
+`GET /api/tasks/{task_id}/result`
+
+任务尚未完成时返回 HTTP 409，错误码 `RESULT_NOT_READY`。
+
+完成后的示例：
+
+```json
+{
+  "task_id": "task_001",
+  "status": "completed",
+  "correctness": {
+    "passed": true,
+    "expected": [6, 8, 10, 12],
+    "actual": [6, 8, 10, 12],
+    "message": "结果一致"
+  },
+  "performance": {
+    "latency_ms": 0.01,
+    "is_simulated": true,
+    "note": "模拟记录，不代表真实 GPU 性能"
   }
 }
 ```
 
-建议区分参数错误、任务不存在、模型调用失败、编译失败、正确性失败、执行超时和内部错误。不要把详细服务器堆栈或密钥返回给前端。
+## 6. HTTP 状态码
 
-## 7. 任务状态建议
+| HTTP | 场景 |
+|---|---|
+| 200 | 查询成功 |
+| 201 | 创建成功 |
+| 400 | 参数不合法 |
+| 404 | 任务不存在 |
+| 409 | 结果尚未就绪 |
+| 500 | 未预期服务端错误 |
 
-`pending`、`generating`、`compiling`、`testing`、`benchmarking`、`completed`、`failed`、`timeout`。
+## 7. 手动接口测试
+启动服务后访问 `/docs`：
+1. 在 `POST /api/tasks` 输入创建任务 JSON 并执行。
+2. 复制返回的 `task_id`。
+3. 在 `GET /api/tasks/{task_id}` 查询详情。
+4. 在 `GET /api/tasks/{task_id}/result` 查询结果。
 
-## 8. 接口变更流程
-
-1. 在 Issue 或讨论中说明变更原因。
-2. 更新本文件和相关数据模型。
-3. 同步修改后端、前端和测试。
-4. 通过 Pull Request 评审后合并。
-
-## 9. 待确认事项
-
-- [ ] 是否使用 `/api/v1` 作为版本前缀
-- [ ] 任务状态采用轮询还是其他通知方式
-- [ ] 分页、鉴权和错误码的最终规范
-- [ ] 实际支持的算子、后端和数据类型
+接口测试就是模拟前端发送 HTTP 请求，检查状态码、响应字段、错误处理和数据库结果。
