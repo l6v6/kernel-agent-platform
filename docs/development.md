@@ -120,3 +120,188 @@ git branch -d feature/your-feature
 3. 按 `README.md` 配置环境。
 4. 运行基础测试。
 5. 从小型 Issue 开始，创建分支并提交 PR。
+
+
+## 共享模型的使用规范
+
+### 1. 安装依赖
+
+本项目使用 Python 3.11.x 和 Pydantic v2。
+
+在项目根目录执行：
+
+```bash
+pip install "pydantic>=2.7,<3.0"
+```
+
+查看安装版本：
+
+```bash
+python -c "import pydantic; print(pydantic.__version__)"
+```
+
+应显示 `2.x.x`。
+
+如果项目使用 `requirements.txt` 统一管理依赖，应从该文件安装：
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. 导入共享模型
+
+所有业务模块统一从项目根目录的 `contracts` 包导入共享模型。
+
+推荐写法：
+
+```python
+from contracts import (
+    Task,
+    TaskCreate,
+    TestCase,
+    GenerationResult,
+    ExecutionResult,
+    EvaluationResult,
+    BenchmarkResult,
+    TaskResult,
+    ErrorInfo,
+)
+```
+
+不要在自己的模块中重新定义这些共享模型。
+
+### 3. 使用模型创建数据
+
+例如，backend 创建一个正式任务：
+
+```python
+from contracts import Task, TaskStatus
+
+task = Task(
+    task_id="task_001",
+    operator="vector_add",
+    shape=[4],
+    dtype="float32",
+    status=TaskStatus.PENDING,
+)
+```
+
+Pydantic 会检查字段是否符合模型要求。
+
+如果传入不合法的数据，会产生 `ValidationError`。
+
+### 4. 使用模型作为函数参数和返回值
+
+各模块按照数据契约使用统一的函数接口。
+
+agent：
+
+```python
+from contracts import Task, GenerationResult
+
+def generate(task: Task) -> GenerationResult:
+    ...
+```
+
+executor：
+
+```python
+from contracts import (
+    Task,
+    GenerationResult,
+    TestCase,
+    ExecutionResult,
+)
+
+def run(
+    task: Task,
+    generation_result: GenerationResult,
+    test_case: TestCase,
+) -> ExecutionResult:
+    ...
+```
+
+evaluator：
+
+```python
+from contracts import EvaluationResult
+
+def evaluate(expected, actual, tolerance) -> EvaluationResult:
+    ...
+```
+
+各组员应根据这些接口实现模块内部逻辑，不要自行修改函数的输入输出约定。
+
+### 5. 模型转换和序列化
+
+Pydantic 模型可以转换为普通 Python 字典：
+
+```python
+task_dict = task.model_dump()
+```
+
+也可以转换为 JSON 字符串：
+
+```python
+task_json = task.model_dump_json(indent=2)
+```
+
+如果需要从字典创建模型：
+
+```python
+task = Task.model_validate(task_dict)
+```
+
+这些方法可以用于 API 数据处理、数据库读写前的数据转换以及测试。
+
+注意：`model_dump()` 默认会将 Enum 转换为对应的枚举值，便于后续数据处理。
+
+### 6. 异常处理
+
+当输入数据不符合模型约定时，Pydantic 会抛出 `ValidationError`。
+
+例如：
+
+```python
+from pydantic import ValidationError
+from contracts import TaskCreate
+
+try:
+    request = TaskCreate(
+        operator="vector_add",
+        shape=[-1],
+    )
+except ValidationError as error:
+    print(error)
+```
+
+backend 应负责将正式 API 输入校验错误转换为统一的 HTTP 错误响应。
+
+其他业务模块也应根据各自职责处理输入错误，不应让未处理异常直接中断整个任务流程。
+
+### 7. 修改共享模型的规范
+
+共享模型由项目统一维护。
+
+如果某个模块需要增加字段或调整接口：
+
+1. 先说明需要修改的原因。
+2. 检查其他模块是否依赖相关字段。
+3. 与项目负责人沟通。
+4. 修改 `contracts/` 中的模型。
+5. 同步修改数据契约文档和 API 文档。
+6. 更新相关模块和测试。
+7. 提交 PR，由项目负责人检查后合并。
+
+未经讨论，不要直接删除或修改其他模块正在使用的字段。
+
+### 8. 单元测试要求
+
+每个模块至少覆盖：
+
+- 正常输入和成功结果；
+- 不合法输入；
+- 模拟失败情况；
+- 返回结果是否符合共享模型。
+
+Mock 测试通过测试替身或依赖替换实现，不应为了测试方便向正式任务模型添加测试专用字段。

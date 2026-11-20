@@ -59,3 +59,45 @@
 
 ## 5. 阶段交付要求
 每人每阶段至少提交一个可检查产物：文档、代码、测试、审查记录或演示记录。
+
+
+## 共享模型与模块协作约定
+
+### 1. 统一数据模型
+
+项目统一使用根目录 `contracts/` 中的 Pydantic 模型。
+
+各组员应根据自己负责的模块导入对应模型，不允许在各自模块中重新定义相同的数据结构。
+
+### 2. 各成员使用范围
+
+| 成员/模块 | 需要使用的共享模型 |
+|---|---|
+| 项目负责人 / backend | TaskCreate、Task、TaskResult |
+| A / frontend | 遵循 API 文档中的请求和响应结构 |
+| B / agent | Task、GenerationResult、ErrorInfo |
+| C / executor | Task、GenerationResult、TestCase、ExecutionResult |
+| D / evaluator | EvaluationResult、BenchmarkResult |
+| D / storage | Task、TaskResult 及各阶段结果模型 |
+
+### 3. 接口协作要求
+
+1. 每位成员开始实现模块前，先阅读 `docs/data-contracts.md`。
+2. 函数参数和返回值尽量使用约定的 Pydantic 模型。
+3. 模块完成后，应提供成功和失败两种情况下的测试结果。
+4. 如果发现共享模型无法满足实际需求，应先提出修改意见。
+5. 修改共享模型时，需要同步通知受影响的成员。
+6. 集成时以 `contracts/` 中的实际模型和文档约定为准。
+
+### 4. 代码提交要求
+
+共享模型的修改应单独说明修改原因和影响范围。
+
+提交 PR 时，应检查：
+
+- 是否影响其他模块；
+- 是否同步更新文档；
+- 是否更新相关单元测试；
+- 是否保持 API 请求和响应结构一致。
+
+项目负责人负责协调共享模型的统一修改和最终集成。

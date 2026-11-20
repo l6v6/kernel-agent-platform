@@ -65,3 +65,108 @@ kernel-agent-platform/
 模拟实现与真实实现遵守同样的数据契约。资源到位后优先替换 `agent`、`executor` 的内部实现和性能测量方式，避免推翻任务管理和前端。
 
 目标国产 GPU 型号、驱动、框架、Triton 版本和模型 API 尚未确定，真实执行适配范围需要资源确定后验证。
+
+
+## 共享数据模型层（Contracts Layer）
+
+### 1. 设计目的
+
+为了保证 backend、agent、executor、evaluator 和 storage 等模块之间的数据格式一致，项目增加独立的共享数据模型层 `contracts/`。
+
+该层负责定义系统内部统一使用的数据结构，包括：
+
+- 任务数据；
+- 测试用例；
+- 通用错误信息；
+- 代码生成结果；
+- 算子执行结果；
+- 正确性评估结果；
+- 性能评估结果；
+- 统一任务结果。
+
+共享模型使用 Pydantic v2 实现，提供数据校验和序列化能力。
+
+### 2. 在系统架构中的位置
+
+```text
+                  frontend
+                      |
+                      | HTTP / JSON
+                      v
+                   backend
+                      |
+                      v
+              contracts（共享模型）
+                /    |    \
+               /     |     \
+              v      v      v
+            agent executor evaluator
+                              |
+                              v
+                            storage
+```
+
+说明：
+
+1. frontend 通过 HTTP API 与 backend 通信。
+2. backend 负责接收请求、创建任务和协调任务流程。
+3. agent、executor、evaluator 根据共享模型处理和返回数据。
+4. storage 负责将任务和结果持久化。
+5. contracts 为各模块提供统一的数据结构。
+
+上图表示数据模型在模块之间的使用关系，不代表所有模块必须直接相互调用。
+
+### 3. 目录结构
+
+```text
+kernel-agent-platform/
+├── contracts/
+│   ├── __init__.py
+│   ├── common.py
+│   ├── task.py
+│   └── results.py
+├── backend/
+├── agent/
+├── executor/
+├── evaluator/
+├── storage/
+├── frontend/
+├── tests/
+└── docs/
+```
+
+### 4. 模块依赖原则
+
+为了降低模块之间的耦合程度，采用以下约定：
+
+1. `contracts/` 只负责数据模型定义，不调用业务模块。
+2. backend、agent、executor、evaluator 和 storage 可以导入 `contracts/` 中的模型。
+3. 不允许在不同业务模块中重复定义同一份共享数据模型。
+4. `contracts/` 不依赖 backend、agent、executor、evaluator 或 storage。
+5. 模块之间通过约定好的函数参数和返回值传递数据。
+
+这样，当某个模块内部实现发生变化时，只要共享数据契约不变，其他模块通常不需要跟着修改。
+
+### 5. 数据层与业务逻辑分离
+
+项目将数据结构定义和业务功能实现分开：
+
+| 层次 | 主要职责 |
+|---|---|
+| contracts | 定义统一数据模型 |
+| backend | 任务管理和流程编排 |
+| agent | 算子代码生成 |
+| executor | 算子执行 |
+| evaluator | 正确性与性能评估 |
+| storage | 数据持久化 |
+| frontend | 用户交互和结果展示 |
+
+共享数据模型不会替代任何业务模块，而是为它们提供统一的数据接口。
+
+### 6. 后续扩展
+
+未来接入真实模型 API、真实 GPU 执行环境以及更多算子类型时，应尽量保持现有数据契约稳定。
+
+如果新增功能需要新的输入或输出字段，应先检查现有模型能否满足需求，再决定是否扩展共享模型。
+
+不应为了增加一种执行环境，就在所有业务模块中重复定义一套新的任务数据结构。
